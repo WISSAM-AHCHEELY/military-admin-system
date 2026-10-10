@@ -1,12 +1,16 @@
 // ⚠️ مهم جداً: ارفع رقم الإصدار (CACHE_VERSION) مع كل نشر جديد ملموس.
 // هذا هو ما يمنع بقاء هاتفك "عالقاً" على نسخة قديمة بعد أي تحديث.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2'; // كانت v1 في المرحلة 1 — رُفعت الآن لأننا أضفنا ملفات جديدة
 const CACHE_NAME = `military-admin-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
   './',
   './index.html',
   './style.css',
+  './app.js',
+  './auth.js',
+  './db.js',
+  './firebase-config.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -36,7 +40,7 @@ self.addEventListener('activate', (event) => {
 
 // استراتيجية الجلب:
 // - صفحات HTML (التنقل): Network First → يضمن أنك دائماً تفتح أحدث نسخة عند توفر إنترنت
-// - أي ملف آخر (CSS/JS/أيقونات): Cache First مع تحديث في الخلفية → سرعة + يعمل دون اتصال
+// - أي ملف آخر (CSS/JS/أيقونات/طلبات Firebase): Cache First مع تحديث في الخلفية
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
@@ -51,6 +55,13 @@ self.addEventListener('fetch', (event) => {
         .catch(() => caches.match(request).then((r) => r || caches.match('./index.html')))
     );
     return;
+  }
+
+  // لا نتدخل في طلبات Firebase نفسها (Auth/Firestore) — تُترك تمر مباشرة للشبكة
+  // لأن هذه بيانات حيّة، وليست ملفات ثابتة يصح تخزينها مؤقتاً
+  const url = new URL(request.url);
+  if (url.hostname.includes('googleapis.com') || url.hostname.includes('firebaseio.com')) {
+    return; // لا event.respondWith() = يمر الطلب كالمعتاد بدون اعتراض
   }
 
   event.respondWith(
