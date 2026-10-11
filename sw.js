@@ -1,6 +1,6 @@
 // ⚠️ مهم جداً: ارفع رقم الإصدار (CACHE_VERSION) مع كل نشر جديد ملموس.
 // هذا هو ما يمنع بقاء هاتفك "عالقاً" على نسخة قديمة بعد أي تحديث.
-const CACHE_VERSION = 'v2'; // كانت v1 في المرحلة 1 — رُفعت الآن لأننا أضفنا ملفات جديدة
+const CACHE_VERSION = 'v3'; // v1 في المرحلة 1، v2 في المرحلة 2 — رُفعت الآن (v3) لإضافة permissions.js و users.js
 const CACHE_NAME = `military-admin-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -11,6 +11,8 @@ const CORE_ASSETS = [
   './auth.js',
   './db.js',
   './firebase-config.js',
+  './permissions.js',
+  './users.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'

@@ -1,6 +1,7 @@
-// app.js — المرحلة 2: Service Worker + تسجيل دخول حقيقي + اختبار قاعدة بيانات حقيقي
+// app.js — المرحلة 4: Service Worker + دخول حقيقي + إدارة مستخدمين وصلاحيات حقيقية
 import { login, logout, watchAuthState } from "./auth.js";
-import { testConnection } from "./db.js";
+import { listUsers, upsertUserProfile } from "./users.js";
+import { ROLES, can } from "./permissions.js";
 
 const swDot = document.getElementById('sw-dot');
 const swText = document.getElementById('sw-text');
@@ -9,57 +10,74 @@ const fbText = document.getElementById('fb-text');
 
 const loginCard = document.getElementById('login-card');
 const dashboardCard = document.getElementById('dashboard-card');
+const usersCard = document.getElementById('users-card');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const loginError = document.getElementById('login-error');
 const userEmailEl = document.getElementById('user-email');
 const userRoleEl = document.getElementById('user-role');
-const testDbBtn = document.getElementById('test-db-btn');
-const testDbResult = document.getElementById('test-db-result');
+
+const uUid = document.getElementById('u-uid');
+const uName = document.getElementById('u-name');
+const uEmail = document.getElementById('u-email');
+const uRole = document.getElementById('u-role');
+const uActive = document.getElementById('u-active');
+const uSaveBtn = document.getElementById('u-save-btn');
+const uSaveMsg = document.getElementById('u-save-msg');
+const usersList = document.getElementById('users-list');
 
 let currentUser = null;
 
-// 1) تسجيل Service Worker (كما في المرحلة 1)
+// تعبئة قائمة الأدوار من permissions.js (مصدر حقيقة واحد، لا تكرار يدوي)
+Object.entries(ROLES).forEach(([key, label]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = label;
+  uRole.appendChild(opt);
+});
+
+// 1) Service Worker
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker
-    .register('./sw.js')
-    .then(() => {
-      swDot.classList.add('ok');
-      swText.textContent = 'Service Worker مسجَّل ويعمل بنجاح';
-    })
-    .catch((err) => {
-      swDot.classList.add('pending');
-      swText.textContent = 'فشل تسجيل Service Worker';
-      console.error('[SW]', err);
-    });
+  navigator.serviceWorker.register('./sw.js')
+    .then(() => { swDot.classList.add('ok'); swText.textContent = 'Service Worker مسجَّل ويعمل بنجاح'; })
+    .catch((err) => { swDot.classList.add('pending'); swText.textContent = 'فشل تسجيل Service Worker'; console.error(err); });
 } else {
   swText.textContent = 'هذا المتصفح لا يدعم Service Worker';
 }
 
-// 2) مراقبة حالة تسجيل الدخول الحقيقية من Firebase
-fbText.textContent = 'في انتظار تسجيل الدخول للتحقق من الاتصال…';
+// 2) حالة الدخول
 fbDot.classList.add('pending');
+fbText.textContent = 'في انتظار تسجيل الدخول…';
 
-watchAuthState((user) => {
+watchAuthState(async (user) => {
   currentUser = user;
   if (user) {
     loginCard.style.display = 'none';
     dashboardCard.style.display = 'block';
     userEmailEl.textContent = user.email;
     userRoleEl.textContent = user.profile
-      ? `الدور: ${user.profile.role || 'غير محدد'} — ${user.profile.active ? 'نشط' : 'موقوف'}`
-      : '⚠️ لا يوجد مستند مطابق في users/{uid} — راجع BUILD_STATUS';
+      ? `الدور: ${ROLES[user.profile.role] || user.profile.role} — ${user.profile.active ? 'نشط' : 'موقوف'}`
+      : '⚠️ لا يوجد ملف صلاحيات لهذا الحساب';
     fbDot.classList.remove('pending');
     fbDot.classList.add('ok');
     fbText.textContent = 'Firebase متصل — تسجيل الدخول نجح فعليًا';
+
+    // إظهار قسم إدارة المستخدمين فقط لمن يملك صلاحية manage_users فعليًا
+    // (هذا تحسين تجربة استخدام فقط — المنع الحقيقي مفروض في firestore.rules)
+    if (can(user.profile, 'manage_users')) {
+      usersCard.style.display = 'block';
+      await refreshUsersList();
+    } else {
+      usersCard.style.display = 'none';
+    }
   } else {
     loginCard.style.display = 'block';
     dashboardCard.style.display = 'none';
-    testDbResult.style.display = 'none';
+    usersCard.style.display = 'none';
   }
 });
 
-// 3) تسجيل الدخول الحقيقي
+// 3) تسجيل الدخول
 loginBtn.addEventListener('click', async () => {
   loginError.style.display = 'none';
   const email = document.getElementById('login-email').value.trim();
@@ -73,38 +91,80 @@ loginBtn.addEventListener('click', async () => {
   loginBtn.textContent = 'جاري الدخول…';
   try {
     await login(email, password);
-    // watchAuthState سيحدّث الواجهة تلقائيًا بعد النجاح
   } catch (err) {
-    console.error('[login]', err.code, err.message);
     loginError.textContent = 'فشل تسجيل الدخول: ' + (err.code || err.message);
     loginError.style.display = 'block';
-    fbDot.classList.remove('ok');
-    fbDot.classList.add('pending');
-    fbText.textContent = 'فشل الاتصال/الدخول — راجع رسالة الخطأ أعلاه';
   } finally {
     loginBtn.disabled = false;
     loginBtn.textContent = 'دخول';
   }
 });
 
-// 4) تسجيل الخروج
 logoutBtn.addEventListener('click', () => logout());
 
-// 5) اختبار حقيقي لقاعدة البيانات (كتابة + قراءة فعليتان، ليستا وهميتين)
-testDbBtn.addEventListener('click', async () => {
-  if (!currentUser) return;
-  testDbBtn.disabled = true;
-  testDbBtn.textContent = 'جاري الاختبار…';
-  testDbResult.style.display = 'block';
-  testDbResult.textContent = 'جاري الكتابة إلى Firestore ثم القراءة منه…';
+// 4) إدارة المستخدمين — قراءة حقيقية من Firestore
+async function refreshUsersList() {
+  usersList.textContent = 'جاري التحميل…';
   try {
-    const data = await testConnection(currentUser.uid);
-    testDbResult.textContent = '✅ نجح الاتصال فعليًا — البيانات المُستردة من Firestore:\n' + JSON.stringify(data, null, 2);
+    const users = await listUsers();
+    if (users.length === 0) {
+      usersList.textContent = 'لا يوجد مستخدمون بعد.';
+      return;
+    }
+    usersList.innerHTML = '';
+    users.forEach((u) => {
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      row.style.cursor = 'pointer';
+      row.innerHTML = `
+        <span class="dot ${u.active ? 'ok' : 'pending'}"></span>
+        <span>${u.name || '(بلا اسم)'} — ${ROLES[u.role] || u.role || '—'} ${u.email ? '— ' + u.email : ''}</span>
+      `;
+      row.addEventListener('click', () => {
+        uUid.value = u.uid;
+        uName.value = u.name || '';
+        uEmail.value = u.email || '';
+        uRole.value = u.role || 'viewer';
+        uActive.checked = !!u.active;
+      });
+      usersList.appendChild(row);
+    });
   } catch (err) {
-    testDbResult.textContent = '❌ فشل الاتصال: ' + (err.code || err.message) + '\n\nإذا كانت الرسالة "Missing or insufficient permissions" فتحقق أن مستند users/' + currentUser.uid + ' موجود وفيه active: true.';
-    console.error('[testConnection]', err);
+    usersList.textContent = '❌ فشل تحميل المستخدمين: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+// 5) حفظ (إنشاء/تعديل) ملف صلاحيات مستخدم — كتابة حقيقية في Firestore
+uSaveBtn.addEventListener('click', async () => {
+  uSaveMsg.style.display = 'none';
+  const uid = uUid.value.trim();
+  if (!uid) {
+    uSaveMsg.textContent = 'أدخل الـ UID أولاً (من Firebase Authentication).';
+    uSaveMsg.style.color = 'var(--danger)';
+    uSaveMsg.style.display = 'block';
+    return;
+  }
+  uSaveBtn.disabled = true;
+  uSaveBtn.textContent = 'جاري الحفظ…';
+  try {
+    await upsertUserProfile(uid, {
+      name: uName.value.trim(),
+      email: uEmail.value.trim(),
+      role: uRole.value,
+      active: uActive.checked
+    });
+    uSaveMsg.textContent = '✅ تم الحفظ فعليًا في Firestore.';
+    uSaveMsg.style.color = 'var(--green)';
+    uSaveMsg.style.display = 'block';
+    await refreshUsersList();
+  } catch (err) {
+    uSaveMsg.textContent = '❌ فشل الحفظ: ' + (err.code || err.message);
+    uSaveMsg.style.color = 'var(--danger)';
+    uSaveMsg.style.display = 'block';
+    console.error(err);
   } finally {
-    testDbBtn.disabled = false;
-    testDbBtn.textContent = 'اختبار الاتصال الحقيقي بقاعدة البيانات';
+    uSaveBtn.disabled = false;
+    uSaveBtn.textContent = 'حفظ المستخدم';
   }
 });

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1a2f" />
+  <title>نظام الإدارة والخدمات العسكرية</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <h1>نظام الإدارة والخدمات العسكرية</h1>
+        <span class="badge-phase">المرحلة 4 — المستخدمون والصلاحيات</span>
+      </div>
+    </header>
+
+    <main>
+      <div class="card">
+        <div class="status-row">
+          <span class="dot ok"></span>
+          <span>الصفحة تُحمَّل عبر HTTPS من رابط حقيقي</span>
+        </div>
+        <div class="status-row">
+          <span class="dot" id="sw-dot"></span>
+          <span id="sw-text">جاري التحقق من Service Worker…</span>
+        </div>
+        <div class="status-row">
+          <span class="dot" id="fb-dot"></span>
+          <span id="fb-text">جاري التحقق من الاتصال بـ Firebase…</span>
+        </div>
+      </div>
+
+      <!-- شاشة تسجيل الدخول -->
+      <div class="card" id="login-card">
+        <p style="margin-top:0; font-weight:600">تسجيل الدخول</p>
+        <div style="display:flex; flex-direction:column; gap:10px; margin-top:12px">
+          <input type="email" id="login-email" placeholder="البريد الإلكتروني"
+                 style="padding:12px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:15px" />
+          <input type="password" id="login-password" placeholder="كلمة المرور"
+                 style="padding:12px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:15px" />
+          <button class="btn btn-primary" id="login-btn">دخول</button>
+          <p id="login-error" style="color:var(--danger); font-size:13px; margin:0; display:none"></p>
+        </div>
+      </div>
+
+      <!-- بطاقة المستخدم الحالي -->
+      <div class="card" id="dashboard-card" style="display:none">
+        <p style="margin-top:0">
+          مرحبًا، <strong id="user-email"></strong>
+          <br />
+          <span style="font-size:13px; color:var(--text-muted)" id="user-role"></span>
+        </p>
+        <button class="btn" id="logout-btn" style="background:transparent; border:1px solid var(--border); color:var(--text); width:100%">
+          تسجيل الخروج
+        </button>
+      </div>
+
+      <!-- إدارة المستخدمين: تظهر فقط لـ super_admin فعليًا (ويُمنع الباقي من Firestore Rules أيضًا) -->
+      <div class="card" id="users-card" style="display:none">
+        <p style="margin-top:0; font-weight:600">إدارة المستخدمين</p>
+        <p style="color:var(--text-muted); font-size:13px; margin-top:-6px">
+          إنشاء حساب الدخول (Email/Password) يبقى يدويًا من Firebase Console أولاً
+          (Authentication ← Add user) — هنا فقط تربط الدور والصلاحية بالـ UID الناتج.
+        </p>
+
+        <div style="display:flex; flex-direction:column; gap:8px; margin:12px 0; padding:12px; border:1px dashed var(--border); border-radius:8px">
+          <input type="text" id="u-uid" placeholder="UID من Firebase Authentication"
+                 style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:14px; direction:ltr" />
+          <input type="text" id="u-name" placeholder="الاسم"
+                 style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:14px" />
+          <input type="email" id="u-email" placeholder="البريد الإلكتروني (للعرض فقط)"
+                 style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:14px" />
+          <select id="u-role" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:14px"></select>
+          <label style="display:flex; align-items:center; gap:8px; font-size:14px">
+            <input type="checkbox" id="u-active" checked /> نشط
+          </label>
+          <button class="btn btn-primary" id="u-save-btn">حفظ المستخدم</button>
+          <p id="u-save-msg" style="font-size:13px; margin:0; display:none"></p>
+        </div>
+
+        <div id="users-list" style="font-size:14px"></div>
+      </div>
+    </main>
+
+    <footer>إصدار المرحلة 4 — نظام الإدارة والخدمات العسكرية</footer>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
