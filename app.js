@@ -1,9 +1,10 @@
-// app.js — المرحلة 5: إضافة وحدة "المنتسبون" الوظيفية الحقيقية الأولى
+// app.js — المرحلة 6: سجل الخدمة (Timeline) + كل ما سبق (Auth, Personnel, Users)
 import { login, logout, watchAuthState } from "./auth.js";
 import { listUsers, upsertUserProfile } from "./users.js";
 import { ROLES, can } from "./permissions.js";
 import { listUnits, createUnit } from "./units.js";
 import { listPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from "./personnel.js";
+import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent } from "./serviceEvents.js";
 
 const swDot = document.getElementById('sw-dot');
 const swText = document.getElementById('sw-text');
@@ -24,6 +25,16 @@ const statPersonnelCount = document.getElementById('stat-personnel-count');
 let currentUser = null;
 let unitsCache = [];
 let personnelCache = [];
+let currentProfilePersonId = null;
+
+// قائمة أنواع أحداث سجل الخدمة
+const evTypeSelect = document.getElementById('ev-type');
+Object.entries(EVENT_TYPES).forEach(([key, label]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = label;
+  evTypeSelect.appendChild(opt);
+});
 
 // ---------- 1) Service Worker ----------
 if ('serviceWorker' in navigator) {
@@ -43,7 +54,11 @@ const tabs = {
 function showTab(name) {
   Object.entries(tabs).forEach(([key, el]) => { el.style.display = key === name ? 'block' : 'none'; });
   document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === name));
-  if (name === 'personnel') refreshPersonnelList();
+  if (name === 'personnel') {
+    document.getElementById('personnel-profile-card').style.display = 'none';
+    document.getElementById('personnel-list-card').style.display = 'block';
+    refreshPersonnelList();
+  }
   if (name === 'users') refreshUsersList();
 }
 document.querySelectorAll('.nav-btn').forEach((btn) => {
@@ -103,19 +118,12 @@ loginBtn.addEventListener('click', async () => {
 });
 logoutBtn.addEventListener('click', () => logout());
 
-// ---------- 4) الوحدات (قائمة بسيطة من قاعدة البيانات) ----------
+// ---------- 4) الوحدات ----------
 async function loadUnitsIntoSelect() {
   const sel = document.getElementById('p-unitId');
   try {
     unitsCache = await listUnits();
     sel.innerHTML = '<option value="">— بدون وحدة محددة —</option>';
-    if (unitsCache.length === 0) {
-      // لا توجد وحدات بعد — نضيف طريقة سريعة لإنشاء أول وحدة عبر prompt (مؤقت حتى مرحلة "إدارة الوحدات" الكاملة)
-      const opt = document.createElement('option');
-      opt.textContent = 'لا توجد وحدات بعد — أضف واحدة من "إضافة منتسب"';
-      opt.disabled = true;
-      sel.appendChild(opt);
-    }
     unitsCache.forEach((u) => {
       const opt = document.createElement('option');
       opt.value = u.id;
@@ -141,7 +149,7 @@ document.getElementById('p-unitId').addEventListener('change', async (e) => {
   }
 });
 
-// ---------- 5) إحصائية لوحة الرئيسية (حقيقية، ليست رقماً ثابتاً) ----------
+// ---------- 5) إحصائية الرئيسية ----------
 async function refreshPersonnelCountStat() {
   try {
     const list = await listPersonnel();
@@ -184,7 +192,6 @@ document.getElementById('p-save-btn').addEventListener('click', async () => {
     msg.style.display = 'block';
     return;
   }
-  // منع تكرار الرقم الوظيفي (بند 35 من المتطلبات) — تحقق على مستوى الواجهة أولاً
   const id = document.getElementById('p-id').value;
   const dup = personnelCache.find((p) => p.serviceNumber === serviceNumber && p.id !== id);
   if (dup) {
@@ -223,7 +230,7 @@ document.getElementById('p-save-btn').addEventListener('click', async () => {
   }
 });
 
-// ---------- 7) قائمة المنتسبين + بحث فوري ----------
+// ---------- 7) قائمة المنتسبين + بحث ----------
 async function refreshPersonnelList() {
   const listEl = document.getElementById('personnel-list');
   listEl.textContent = 'جاري التحميل…';
@@ -253,6 +260,7 @@ function renderPersonnelList(list) {
       <p class="p-card-name">${esc(p.fullName)} ${p.rank ? '— ' + esc(p.rank) : ''}</p>
       <p class="p-card-meta">${esc(p.serviceNumber || '')} · ${esc(unitName)} · ${esc(p.position || '')}</p>
       <div class="p-card-actions">
+        <button data-action="profile" data-id="${p.id}">فتح الملف</button>
         ${canEdit ? `<button data-action="edit" data-id="${p.id}">تعديل</button>` : ''}
         ${canDelete ? `<button data-action="delete" data-id="${p.id}" class="danger">حذف</button>` : ''}
       </div>
@@ -260,6 +268,9 @@ function renderPersonnelList(list) {
     listEl.appendChild(div);
   });
 
+  listEl.querySelectorAll('[data-action="profile"]').forEach((btn) => {
+    btn.addEventListener('click', () => openProfile(btn.dataset.id));
+  });
   listEl.querySelectorAll('[data-action="edit"]').forEach((btn) => {
     btn.addEventListener('click', () => openEditForm(btn.dataset.id));
   });
@@ -308,7 +319,126 @@ function esc(str) {
   return div.innerHTML;
 }
 
-// ---------- 8) إدارة المستخدمين (من المرحلة 4، بدون تغيير منطقي) ----------
+// ---------- 8) ملف خدمة المنتسب (بطاقة كاملة + Timeline) ----------
+const FIELD_LABELS = {
+  fullName: 'الاسم', motherName: 'اسم الأم', serviceNumber: 'الرقم الوظيفي',
+  category: 'الفئة', rank: 'الرتبة', corps: 'الصنف', specialty: 'الاختصاص',
+  position: 'المنصب', phone: 'الهاتف', birthDate: 'تاريخ الميلاد',
+  birthPlace: 'محل الولادة', address: 'السكن', province: 'المحافظة',
+  joinDate: 'تاريخ الالتحاق', status: 'الحالة', notes: 'ملاحظات'
+};
+const CATEGORY_LABELS = { officer: 'ضابط', rank: 'مرتبة', civilian: 'موظف مدني', contractor: 'متعاقد/متطوع' };
+const STATUS_LABELS = { present: 'موجود', leave: 'إجازة', duty: 'واجب', course: 'دورة', hospital: 'مستشفى', absent: 'غياب' };
+
+function openProfile(id) {
+  const p = personnelCache.find((x) => x.id === id);
+  if (!p) return;
+  currentProfilePersonId = id;
+  document.getElementById('personnel-list-card').style.display = 'none';
+  formCard.style.display = 'none';
+  document.getElementById('personnel-profile-card').style.display = 'block';
+
+  const unitName = unitsCache.find((u) => u.id === p.unitId)?.name || '—';
+  const infoEl = document.getElementById('p-profile-info');
+  let rows = `<p style="font-size:20px; font-weight:700; margin:0 0 4px">${esc(p.fullName)}</p>
+    <p style="color:var(--text-muted); margin:0 0 14px">${esc(CATEGORY_LABELS[p.category] || p.category || '')} — ${esc(unitName)}</p>`;
+  Object.entries(FIELD_LABELS).forEach(([key, label]) => {
+    if (key === 'fullName') return;
+    let val = p[key] || '—';
+    if (key === 'status') val = STATUS_LABELS[val] || val;
+    if (key === 'category') val = CATEGORY_LABELS[val] || val;
+    rows += `<div class="status-row"><span style="color:var(--text-muted); min-width:110px">${label}</span><span>${esc(val)}</span></div>`;
+  });
+  infoEl.innerHTML = rows;
+
+  loadTimeline(id);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.getElementById('p-profile-back-btn').addEventListener('click', () => {
+  document.getElementById('personnel-profile-card').style.display = 'none';
+  document.getElementById('personnel-list-card').style.display = 'block';
+  currentProfilePersonId = null;
+});
+
+async function loadTimeline(personId) {
+  const tlEl = document.getElementById('p-profile-timeline');
+  tlEl.textContent = 'جاري التحميل…';
+  try {
+    const events = await listEventsForPerson(personId);
+    if (events.length === 0) {
+      tlEl.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا يوجد أحداث مسجّلة بعد.</p>';
+      return;
+    }
+    const canDelete = can(currentUser.profile, 'delete');
+    tlEl.innerHTML = '';
+    events.forEach((ev) => {
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      row.innerHTML = `
+        <span class="dot ok"></span>
+        <span style="flex:1">
+          <strong>${esc(ev.date || '')}</strong> — ${esc(EVENT_TYPES[ev.type] || ev.type)}
+          ${ev.title ? ': ' + esc(ev.title) : ''}
+          ${ev.orderNumber ? ' (أمر رقم ' + esc(ev.orderNumber) + ')' : ''}
+        </span>
+        ${canDelete ? `<button data-ev-id="${ev.id}" style="font-size:12px; padding:4px 8px; border:1px solid var(--danger); color:var(--danger); background:transparent; border-radius:6px">حذف</button>` : ''}
+      `;
+      tlEl.appendChild(row);
+    });
+    tlEl.querySelectorAll('[data-ev-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('حذف هذا الحدث من السجل؟')) return;
+        await deleteServiceEvent(btn.dataset.evId);
+        loadTimeline(personId);
+      });
+    });
+  } catch (err) {
+    tlEl.textContent = '❌ فشل تحميل السجل: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+document.getElementById('ev-save-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('ev-save-msg');
+  msg.style.display = 'none';
+  const date = document.getElementById('ev-date').value;
+  if (!date || !currentProfilePersonId) {
+    msg.textContent = 'اختر التاريخ أولاً.';
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('ev-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'جاري الحفظ…';
+  try {
+    await addServiceEvent({
+      personnelId: currentProfilePersonId,
+      type: document.getElementById('ev-type').value,
+      date,
+      title: document.getElementById('ev-title').value.trim(),
+      orderNumber: document.getElementById('ev-orderNumber').value.trim()
+    }, currentUser.uid);
+    msg.textContent = '✅ أُضيف الحدث فعليًا للسجل.';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+    document.getElementById('ev-date').value = '';
+    document.getElementById('ev-title').value = '';
+    document.getElementById('ev-orderNumber').value = '';
+    loadTimeline(currentProfilePersonId);
+  } catch (err) {
+    msg.textContent = '❌ فشل الحفظ: ' + (err.code || err.message);
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'إضافة حدث للسجل';
+  }
+});
+
+// ---------- 9) إدارة المستخدمين ----------
 const uUid = document.getElementById('u-uid');
 const uName = document.getElementById('u-name');
 const uEmail = document.getElementById('u-email');
