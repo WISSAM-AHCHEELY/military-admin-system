@@ -5,6 +5,7 @@ import { ROLES, can } from "./permissions.js";
 import { listUnits, createUnit } from "./units.js";
 import { listPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from "./personnel.js";
 import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent } from "./serviceEvents.js";
+import { LEAVE_TYPES, calcLeaveDays, isLeaveActiveToday, listLeavesForPerson, listAllLeaves, addLeave, deleteLeave } from "./leaves.js";
 
 const swDot = document.getElementById('sw-dot');
 const swText = document.getElementById('sw-text');
@@ -34,6 +35,14 @@ Object.entries(EVENT_TYPES).forEach(([key, label]) => {
   opt.value = key;
   opt.textContent = label;
   evTypeSelect.appendChild(opt);
+});
+
+const lvTypeSelect = document.getElementById('lv-type');
+Object.entries(LEAVE_TYPES).forEach(([key, label]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = label;
+  lvTypeSelect.appendChild(opt);
 });
 
 // ---------- 1) Service Worker ----------
@@ -87,6 +96,7 @@ watchAuthState(async (user) => {
 
     await loadUnitsIntoSelect();
     await refreshPersonnelCountStat();
+    await refreshLeavesStat();
     showTab('home');
   } else {
     loginCard.style.display = 'block';
@@ -157,6 +167,17 @@ async function refreshPersonnelCountStat() {
     statPersonnelCount.textContent = `عدد المنتسبين: ${list.length}`;
   } catch (err) {
     statPersonnelCount.textContent = 'تعذّر حساب عدد المنتسبين: ' + (err.code || err.message);
+  }
+}
+
+const statLeavesActive = document.getElementById('stat-leaves-active');
+async function refreshLeavesStat() {
+  try {
+    const all = await listAllLeaves();
+    const activeCount = all.filter(isLeaveActiveToday).length;
+    statLeavesActive.textContent = `عدد الإجازات الحالية: ${activeCount}`;
+  } catch (err) {
+    statLeavesActive.textContent = 'تعذّر حساب الإجازات الحالية: ' + (err.code || err.message);
   }
 }
 
@@ -355,8 +376,11 @@ function openProfile(id) {
   // (تحسين تجربة استخدام فقط — الفرض الحقيقي يبقى في firestore.rules)
   document.getElementById('p-profile-add-event').style.display =
     can(currentUser.profile, 'create') ? 'flex' : 'none';
+  document.getElementById('p-profile-add-leave').style.display =
+    can(currentUser.profile, 'create') ? 'flex' : 'none';
 
   loadTimeline(id);
+  loadLeaves(id);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -403,6 +427,121 @@ async function loadTimeline(personId) {
     console.error(err);
   }
 }
+
+// ---------- الإجازات ----------
+function updateDaysPreview() {
+  const s = document.getElementById('lv-start').value;
+  const e = document.getElementById('lv-end').value;
+  const el = document.getElementById('lv-days-preview');
+  if (!s || !e) { el.textContent = 'عدد الأيام: —'; return; }
+  const days = calcLeaveDays(s, e);
+  el.textContent = days > 0 ? `عدد الأيام: ${days}` : 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية';
+}
+document.getElementById('lv-start').addEventListener('change', updateDaysPreview);
+document.getElementById('lv-end').addEventListener('change', updateDaysPreview);
+
+async function loadLeaves(personId) {
+  const el = document.getElementById('p-profile-leaves');
+  el.textContent = 'جاري التحميل…';
+  try {
+    const leaves = await listLeavesForPerson(personId);
+    if (leaves.length === 0) {
+      el.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا يوجد إجازات مسجّلة بعد.</p>';
+      return;
+    }
+    const canDelete = can(currentUser.profile, 'delete');
+    const today = new Date().toISOString().slice(0, 10);
+    el.innerHTML = '';
+    leaves.forEach((lv) => {
+      const status = lv.endDate < today ? 'منتهية' : (lv.startDate > today ? 'قادمة' : 'حالية الآن');
+      const dotClass = status === 'حالية الآن' ? 'ok' : 'pending';
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      row.innerHTML = `
+        <span class="dot ${dotClass}"></span>
+        <span style="flex:1">
+          <strong>${esc(LEAVE_TYPES[lv.type] || lv.type)}</strong> — ${esc(lv.startDate)} إلى ${esc(lv.endDate)}
+          (${lv.days} يوم) · ${status}
+          ${lv.orderNumber ? ' · أمر رقم ' + esc(lv.orderNumber) : ''}
+        </span>
+        ${canDelete ? `<button data-lv-id="${lv.id}" style="font-size:12px; padding:4px 8px; border:1px solid var(--danger); color:var(--danger); background:transparent; border-radius:6px">حذف</button>` : ''}
+      `;
+      el.appendChild(row);
+    });
+    el.querySelectorAll('[data-lv-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('حذف هذه الإجازة من السجل؟')) return;
+        await deleteLeave(btn.dataset.lvId);
+        loadLeaves(personId);
+        refreshLeavesStat();
+      });
+    });
+  } catch (err) {
+    el.textContent = '❌ فشل تحميل الإجازات: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+document.getElementById('lv-save-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('lv-save-msg');
+  msg.style.display = 'none';
+  const startDate = document.getElementById('lv-start').value;
+  const endDate = document.getElementById('lv-end').value;
+  if (!startDate || !endDate || !currentProfilePersonId) {
+    msg.textContent = 'أدخل تاريخ البداية والنهاية.';
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    return;
+  }
+  const days = calcLeaveDays(startDate, endDate);
+  if (days <= 0) {
+    msg.textContent = 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية أو يساويه.';
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('lv-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'جاري الحفظ…';
+  try {
+    const leaveData = {
+      personnelId: currentProfilePersonId,
+      type: document.getElementById('lv-type').value,
+      startDate,
+      endDate,
+      orderNumber: document.getElementById('lv-orderNumber').value.trim(),
+      issuer: document.getElementById('lv-issuer').value.trim()
+    };
+    await addLeave(leaveData, currentUser.uid);
+
+    // ربط حالة المنتسب فعليًا: إذا كانت الإجازة فعّالة اليوم، تُحدَّث حالته تلقائيًا
+    // (شرط إلزامي: الحالة يجب أن تعتمد على بيانات حقيقية، لا تبقى منفصلة عن الإجازات)
+    if (isLeaveActiveToday(leaveData)) {
+      await updatePersonnel(currentProfilePersonId, { status: 'leave' }, currentUser.uid);
+      const p = personnelCache.find((x) => x.id === currentProfilePersonId);
+      if (p) p.status = 'leave';
+    }
+
+    msg.textContent = '✅ تم تسجيل الإجازة فعليًا.';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+    document.getElementById('lv-start').value = '';
+    document.getElementById('lv-end').value = '';
+    document.getElementById('lv-orderNumber').value = '';
+    document.getElementById('lv-issuer').value = '';
+    updateDaysPreview();
+    loadLeaves(currentProfilePersonId);
+    refreshLeavesStat();
+  } catch (err) {
+    msg.textContent = '❌ فشل الحفظ: ' + (err.code || err.message);
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'تسجيل الإجازة';
+  }
+});
 
 document.getElementById('ev-save-btn').addEventListener('click', async () => {
   const msg = document.getElementById('ev-save-msg');

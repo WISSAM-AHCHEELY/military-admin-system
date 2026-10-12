@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1a2f" />
+  <title>نظام الإدارة والخدمات العسكرية</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <h1>نظام الإدارة والخدمات العسكرية</h1>
+        <span class="badge-phase">المرحلة 7 — الإجازات</span>
+      </div>
+    </header>
+
+    <!-- شريط تنقل بسيط — يظهر فقط بعد تسجيل الدخول -->
+    <nav id="main-nav" style="display:none; display:flex; gap:8px; padding:10px 12px; overflow-x:auto; background:var(--navy-900)">
+      <button class="nav-btn" data-tab="home">الرئيسية</button>
+      <button class="nav-btn" data-tab="personnel">المنتسبون</button>
+      <button class="nav-btn" data-tab="users" id="nav-users-btn" style="display:none">المستخدمون</button>
+    </nav>
+
+    <main>
+      <div class="card">
+        <div class="status-row">
+          <span class="dot ok"></span>
+          <span>الصفحة تُحمَّل عبر HTTPS من رابط حقيقي</span>
+        </div>
+        <div class="status-row">
+          <span class="dot" id="sw-dot"></span>
+          <span id="sw-text">جاري التحقق من Service Worker…</span>
+        </div>
+        <div class="status-row">
+          <span class="dot" id="fb-dot"></span>
+          <span id="fb-text">جاري التحقق من الاتصال بـ Firebase…</span>
+        </div>
+      </div>
+
+      <!-- تسجيل الدخول -->
+      <div class="card" id="login-card">
+        <p style="margin-top:0; font-weight:600">تسجيل الدخول</p>
+        <div style="display:flex; flex-direction:column; gap:10px; margin-top:12px">
+          <input type="email" id="login-email" placeholder="البريد الإلكتروني"
+                 style="padding:12px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:15px" />
+          <input type="password" id="login-password" placeholder="كلمة المرور"
+                 style="padding:12px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:15px" />
+          <button class="btn btn-primary" id="login-btn">دخول</button>
+          <p id="login-error" style="color:var(--danger); font-size:13px; margin:0; display:none"></p>
+        </div>
+      </div>
+
+      <!-- ===== تبويب: الرئيسية ===== -->
+      <section id="tab-home" style="display:none">
+        <div class="card">
+          <p style="margin-top:0">
+            مرحبًا، <strong id="user-email"></strong>
+            <br />
+            <span style="font-size:13px; color:var(--text-muted)" id="user-role"></span>
+          </p>
+          <div class="status-row">
+            <span class="dot ok"></span>
+            <span id="stat-personnel-count">عدد المنتسبين: جاري الحساب…</span>
+          </div>
+          <div class="status-row">
+            <span class="dot ok"></span>
+            <span id="stat-leaves-active">عدد الإجازات الحالية: جاري الحساب…</span>
+          </div>
+          <button class="btn" id="logout-btn" style="background:transparent; border:1px solid var(--border); color:var(--text); width:100%; margin-top:10px">
+            تسجيل الخروج
+          </button>
+        </div>
+      </section>
+
+      <!-- ===== تبويب: المنتسبون ===== -->
+      <section id="tab-personnel" style="display:none">
+        <div class="card" id="personnel-form-card" style="display:none">
+          <p style="margin-top:0; font-weight:600" id="personnel-form-title">إضافة منتسب جديد</p>
+          <input type="hidden" id="p-id" />
+          <div style="display:flex; flex-direction:column; gap:8px">
+            <input id="p-fullName" placeholder="الاسم الثلاثي/الرباعي *" />
+            <input id="p-motherName" placeholder="اسم الأم" />
+            <input id="p-serviceNumber" placeholder="الرقم الوظيفي/العسكري *" />
+            <select id="p-category">
+              <option value="officer">ضابط</option>
+              <option value="rank">مرتبة</option>
+              <option value="civilian">موظف مدني</option>
+              <option value="contractor">متعاقد/متطوع</option>
+            </select>
+            <input id="p-rank" placeholder="الرتبة" />
+            <input id="p-corps" placeholder="الصنف" />
+            <input id="p-specialty" placeholder="الاختصاص" />
+            <select id="p-unitId"></select>
+            <input id="p-position" placeholder="المنصب" />
+            <input id="p-phone" placeholder="رقم الهاتف" />
+            <input id="p-birthDate" type="date" placeholder="تاريخ الميلاد" />
+            <input id="p-birthPlace" placeholder="محل الولادة" />
+            <input id="p-address" placeholder="السكن" />
+            <input id="p-province" placeholder="المحافظة" />
+            <input id="p-joinDate" type="date" placeholder="تاريخ الالتحاق" />
+            <select id="p-status">
+              <option value="present">موجود</option>
+              <option value="leave">إجازة</option>
+              <option value="duty">واجب</option>
+              <option value="course">دورة</option>
+              <option value="hospital">مستشفى</option>
+              <option value="absent">غياب</option>
+            </select>
+            <textarea id="p-notes" placeholder="ملاحظات" rows="2"></textarea>
+            <button class="btn btn-primary" id="p-save-btn">حفظ</button>
+            <button class="btn" id="p-cancel-btn" style="background:transparent; border:1px solid var(--border); color:var(--text)">إلغاء</button>
+            <p id="p-save-msg" style="font-size:13px; margin:0; display:none"></p>
+          </div>
+        </div>
+
+        <!-- ملف خدمة المنتسب: بطاقة كاملة + سجل خدمة (Timeline) حقيقي -->
+        <div class="card" id="personnel-profile-card" style="display:none">
+          <button class="btn" id="p-profile-back-btn" style="background:transparent; border:1px solid var(--border); color:var(--text); width:auto; padding:6px 14px; font-size:13px; margin-bottom:12px">← رجوع للقائمة</button>
+          <div id="p-profile-info"></div>
+
+          <hr style="border-color:var(--border); margin:16px 0" />
+
+          <p style="font-weight:600; margin-bottom:8px">الإجازات</p>
+          <div id="p-profile-add-leave" style="display:flex; flex-direction:column; gap:8px; padding:12px; border:1px dashed var(--border); border-radius:8px; margin-bottom:12px">
+            <select id="lv-type"></select>
+            <label style="font-size:12px; color:var(--text-muted)">تاريخ البداية</label>
+            <input type="date" id="lv-start" />
+            <label style="font-size:12px; color:var(--text-muted)">تاريخ النهاية</label>
+            <input type="date" id="lv-end" />
+            <input id="lv-orderNumber" placeholder="رقم الأمر/الكتاب (اختياري)" />
+            <input id="lv-issuer" placeholder="الجهة المصدرة (اختياري)" />
+            <p id="lv-days-preview" style="font-size:13px; color:var(--text-muted); margin:0">عدد الأيام: —</p>
+            <button class="btn btn-primary" id="lv-save-btn">تسجيل الإجازة</button>
+            <p id="lv-save-msg" style="font-size:13px; margin:0; display:none"></p>
+          </div>
+          <div id="p-profile-leaves"></div>
+
+          <hr style="border-color:var(--border); margin:16px 0" />
+
+          <p style="font-weight:600; margin-bottom:8px">سجل الخدمة (Timeline)</p>
+          <div id="p-profile-add-event" style="display:flex; flex-direction:column; gap:8px; padding:12px; border:1px dashed var(--border); border-radius:8px; margin-bottom:12px">
+            <select id="ev-type"></select>
+            <input type="date" id="ev-date" />
+            <input id="ev-title" placeholder="تفاصيل الحدث (مثلاً: ترقية إلى رائد)" />
+            <input id="ev-orderNumber" placeholder="رقم الأمر/الكتاب (اختياري)" />
+            <button class="btn btn-primary" id="ev-save-btn">إضافة حدث للسجل</button>
+            <p id="ev-save-msg" style="font-size:13px; margin:0; display:none"></p>
+          </div>
+          <div id="p-profile-timeline"></div>
+        </div>
+
+        <div class="card" id="personnel-list-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <p style="margin:0; font-weight:600">قائمة المنتسبين</p>
+            <button class="btn btn-primary" id="p-add-btn" style="width:auto; padding:8px 16px; font-size:13px">+ إضافة منتسب</button>
+          </div>
+          <input id="p-search" placeholder="بحث بالاسم أو الرقم أو الرتبة…" style="margin-bottom:10px" />
+          <div id="personnel-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== تبويب: المستخدمون ===== -->
+      <section id="tab-users" style="display:none">
+        <div class="card">
+          <p style="margin-top:0; font-weight:600">إدارة المستخدمين</p>
+          <p style="color:var(--text-muted); font-size:13px; margin-top:-6px">
+            إنشاء حساب الدخول يبقى يدويًا من Firebase Console أولاً، ثم اربط الدور هنا بالـ UID.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:8px; margin:12px 0; padding:12px; border:1px dashed var(--border); border-radius:8px">
+            <input type="text" id="u-uid" placeholder="UID من Firebase Authentication" style="direction:ltr" />
+            <input type="text" id="u-name" placeholder="الاسم" />
+            <input type="email" id="u-email" placeholder="البريد الإلكتروني (للعرض فقط)" />
+            <select id="u-role"></select>
+            <label style="display:flex; align-items:center; gap:8px; font-size:14px">
+              <input type="checkbox" id="u-active" checked /> نشط
+            </label>
+            <button class="btn btn-primary" id="u-save-btn">حفظ المستخدم</button>
+            <p id="u-save-msg" style="font-size:13px; margin:0; display:none"></p>
+          </div>
+          <div id="users-list" style="font-size:14px"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer>إصدار المرحلة 7 — نظام الإدارة والخدمات العسكرية</footer>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
