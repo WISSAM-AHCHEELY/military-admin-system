@@ -351,6 +351,11 @@ function openProfile(id) {
   });
   infoEl.innerHTML = rows;
 
+  // إخفاء نموذج إضافة الحدث عن أي دور لا يملك صلاحية create فعليًا
+  // (تحسين تجربة استخدام فقط — الفرض الحقيقي يبقى في firestore.rules)
+  document.getElementById('p-profile-add-event').style.display =
+    can(currentUser.profile, 'create') ? 'flex' : 'none';
+
   loadTimeline(id);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
