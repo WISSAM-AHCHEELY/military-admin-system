@@ -1,6 +1,6 @@
 // ⚠️ مهم جداً: ارفع رقم الإصدار (CACHE_VERSION) مع كل نشر جديد ملموس.
 // هذا هو ما يمنع بقاء هاتفك "عالقاً" على نسخة قديمة بعد أي تحديث.
-const CACHE_VERSION = 'v7'; // ...، v6=إصلاح واجهة، v7=المرحلة7 (leaves.js)
+const CACHE_VERSION = 'v8'; // ...، v7=المرحلة7 (leaves.js)، v8=المرحلة9 (attendance.js)
 const CACHE_NAME = `military-admin-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -17,6 +17,7 @@ const CORE_ASSETS = [
   './personnel.js',
   './serviceEvents.js',
   './leaves.js',
+  './attendance.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'

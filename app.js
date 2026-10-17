@@ -6,6 +6,7 @@ import { listUnits, createUnit } from "./units.js";
 import { listPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from "./personnel.js";
 import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent } from "./serviceEvents.js";
 import { LEAVE_TYPES, calcLeaveDays, isLeaveActiveToday, listLeavesForPerson, listAllLeaves, addLeave, deleteLeave } from "./leaves.js";
+import { ATTENDANCE_STATUSES, setAttendance, listAttendanceForDate } from "./attendance.js";
 
 const swDot = document.getElementById('sw-dot');
 const swText = document.getElementById('sw-text');
@@ -58,6 +59,7 @@ if ('serviceWorker' in navigator) {
 const tabs = {
   home: document.getElementById('tab-home'),
   personnel: document.getElementById('tab-personnel'),
+  attendance: document.getElementById('tab-attendance'),
   users: document.getElementById('tab-users')
 };
 function showTab(name) {
@@ -69,6 +71,7 @@ function showTab(name) {
     refreshPersonnelList();
   }
   if (name === 'users') refreshUsersList();
+  if (name === 'attendance') loadAttendanceTab();
 }
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => showTab(btn.dataset.tab));
@@ -581,6 +584,87 @@ document.getElementById('ev-save-btn').addEventListener('click', async () => {
     btn.textContent = 'إضافة حدث للسجل';
   }
 });
+
+// ---------- الحضور اليومي ----------
+const attDateInput = document.getElementById('att-date');
+attDateInput.value = new Date().toISOString().slice(0, 10);
+attDateInput.addEventListener('change', loadAttendanceTab);
+
+async function loadAttendanceTab() {
+  const date = attDateInput.value;
+  const listEl = document.getElementById('attendance-list');
+  const summaryEl = document.getElementById('att-summary');
+  listEl.textContent = 'جاري التحميل…';
+  try {
+    if (personnelCache.length === 0) personnelCache = await listPersonnel();
+    const records = await listAttendanceForDate(date);
+    const canEdit = can(currentUser.profile, 'create') || can(currentUser.profile, 'edit');
+
+    renderAttendanceSummary(records, summaryEl);
+
+    if (personnelCache.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا يوجد منتسبون بعد.</p>';
+      return;
+    }
+    listEl.innerHTML = '';
+    personnelCache.forEach((p) => {
+      const current = records[p.id]?.status || p.status || 'present';
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      if (canEdit) {
+        const selHtml = Object.entries(ATTENDANCE_STATUSES)
+          .map(([k, label]) => `<option value="${k}" ${k === current ? 'selected' : ''}>${label}</option>`)
+          .join('');
+        row.innerHTML = `
+          <span style="flex:1">${esc(p.fullName)} ${p.rank ? '— ' + esc(p.rank) : ''}</span>
+          <select data-att-person="${p.id}" style="width:auto; min-width:120px">${selHtml}</select>
+        `;
+      } else {
+        row.innerHTML = `
+          <span class="dot ok"></span>
+          <span>${esc(p.fullName)} — ${esc(ATTENDANCE_STATUSES[current] || current)}</span>
+        `;
+      }
+      listEl.appendChild(row);
+    });
+
+    if (canEdit) {
+      listEl.querySelectorAll('[data-att-person]').forEach((sel) => {
+        sel.addEventListener('change', async () => {
+          const personId = sel.dataset.attPerson;
+          sel.disabled = true;
+          try {
+            await setAttendance(personId, date, sel.value, currentUser.uid);
+            // ربط الحالة الحالية بالمنتسب فقط إذا كان التاريخ هو اليوم (نفس منطق الإجازات)
+            const todayStr = new Date().toISOString().slice(0, 10);
+            if (date === todayStr) {
+              await updatePersonnel(personId, { status: sel.value }, currentUser.uid);
+              const p = personnelCache.find((x) => x.id === personId);
+              if (p) p.status = sel.value;
+            }
+            const updated = await listAttendanceForDate(date);
+            renderAttendanceSummary(updated, summaryEl);
+          } catch (err) {
+            alert('فشل حفظ الحضور: ' + (err.code || err.message));
+            console.error(err);
+          } finally {
+            sel.disabled = false;
+          }
+        });
+      });
+    }
+  } catch (err) {
+    listEl.textContent = '❌ فشل تحميل الحضور: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+function renderAttendanceSummary(records, el) {
+  const counts = {};
+  Object.values(records).forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const parts = Object.entries(counts).map(([k, n]) => `${ATTENDANCE_STATUSES[k] || k}: ${n}`);
+  el.textContent = parts.length ? parts.join(' · ') : 'لا توجد سجلات حضور مسجّلة لهذا اليوم بعد.';
+}
 
 // ---------- 9) إدارة المستخدمين ----------
 const uUid = document.getElementById('u-uid');
