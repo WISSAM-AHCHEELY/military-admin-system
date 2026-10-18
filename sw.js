@@ -1,6 +1,6 @@
 // ⚠️ مهم جداً: ارفع رقم الإصدار (CACHE_VERSION) مع كل نشر جديد ملموس.
 // هذا هو ما يمنع بقاء هاتفك "عالقاً" على نسخة قديمة بعد أي تحديث.
-const CACHE_VERSION = 'v8'; // ...، v7=المرحلة7 (leaves.js)، v8=المرحلة9 (attendance.js)
+const CACHE_VERSION = 'v9'; // ...، v8=المرحلة9 (attendance.js)، v9=المرحلة8 (cloudinary.js, documents.js) + إصلاح تخزين طلبات POST
 const CACHE_NAME = `military-admin-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -18,6 +18,8 @@ const CORE_ASSETS = [
   './serviceEvents.js',
   './leaves.js',
   './attendance.js',
+  './cloudinary.js',
+  './documents.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -64,11 +66,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // لا نتدخل في طلبات Firebase نفسها (Auth/Firestore) — تُترك تمر مباشرة للشبكة
-  // لأن هذه بيانات حيّة، وليست ملفات ثابتة يصح تخزينها مؤقتاً
+  // لا نتدخل في طلبات Firebase أو Cloudinary نفسها — تُترك تمر مباشرة للشبكة
+  // (بيانات حيّة أو رفع ملفات، وليست ملفات ثابتة يصح تخزينها مؤقتاً)
   const url = new URL(request.url);
-  if (url.hostname.includes('googleapis.com') || url.hostname.includes('firebaseio.com')) {
+  if (
+    url.hostname.includes('googleapis.com') ||
+    url.hostname.includes('firebaseio.com') ||
+    url.hostname.includes('cloudinary.com')
+  ) {
     return; // لا event.respondWith() = يمر الطلب كالمعتاد بدون اعتراض
+  }
+
+  // Cache API يرفض تخزين أي طلب غير GET (مثل رفع ملف بـ POST) — تفادي ذلك صراحة
+  if (request.method !== 'GET') {
+    return;
   }
 
   event.respondWith(

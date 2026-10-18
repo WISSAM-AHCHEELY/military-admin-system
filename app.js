@@ -7,6 +7,8 @@ import { listPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from
 import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent } from "./serviceEvents.js";
 import { LEAVE_TYPES, calcLeaveDays, isLeaveActiveToday, listLeavesForPerson, listAllLeaves, addLeave, deleteLeave } from "./leaves.js";
 import { ATTENDANCE_STATUSES, setAttendance, listAttendanceForDate } from "./attendance.js";
+import { uploadToCloudinary } from "./cloudinary.js";
+import { DOC_TYPES, listDocumentsForPerson, addDocumentRecord, deleteDocumentRecord } from "./documents.js";
 
 const swDot = document.getElementById('sw-dot');
 const swText = document.getElementById('sw-text');
@@ -36,6 +38,14 @@ Object.entries(EVENT_TYPES).forEach(([key, label]) => {
   opt.value = key;
   opt.textContent = label;
   evTypeSelect.appendChild(opt);
+});
+
+const docTypeSelect = document.getElementById('doc-type');
+Object.entries(DOC_TYPES).forEach(([key, label]) => {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = label;
+  docTypeSelect.appendChild(opt);
 });
 
 const lvTypeSelect = document.getElementById('lv-type');
@@ -362,6 +372,20 @@ function openProfile(id) {
   formCard.style.display = 'none';
   document.getElementById('personnel-profile-card').style.display = 'block';
 
+  const canCreate = can(currentUser.profile, 'create');
+  const photoImg = document.getElementById('p-profile-photo');
+  if (p.photoURL) {
+    photoImg.src = p.photoURL;
+    photoImg.style.display = 'inline-block';
+  } else {
+    photoImg.style.display = 'none';
+  }
+  document.getElementById('p-profile-photo-upload').style.display = canCreate ? 'block' : 'none';
+  document.getElementById('p-photo-msg').style.display = 'none';
+  document.getElementById('p-photo-input').value = '';
+
+  document.getElementById('p-profile-add-doc').style.display = canCreate ? 'flex' : 'none';
+
   const unitName = unitsCache.find((u) => u.id === p.unitId)?.name || '—';
   const infoEl = document.getElementById('p-profile-info');
   let rows = `<p style="font-size:20px; font-weight:700; margin:0 0 4px">${esc(p.fullName)}</p>
@@ -384,6 +408,7 @@ function openProfile(id) {
 
   loadTimeline(id);
   loadLeaves(id);
+  loadDocuments(id);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -582,6 +607,112 @@ document.getElementById('ev-save-btn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = 'إضافة حدث للسجل';
+  }
+});
+
+// ---------- صورة المنتسب (Cloudinary) ----------
+document.getElementById('p-photo-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || !currentProfilePersonId) return;
+  const msg = document.getElementById('p-photo-msg');
+  msg.textContent = 'جاري رفع الصورة…';
+  msg.style.color = 'var(--text-muted)';
+  msg.style.display = 'block';
+  try {
+    const { url } = await uploadToCloudinary(file);
+    await updatePersonnel(currentProfilePersonId, { photoURL: url }, currentUser.uid);
+    const p = personnelCache.find((x) => x.id === currentProfilePersonId);
+    if (p) p.photoURL = url;
+    const img = document.getElementById('p-profile-photo');
+    img.src = url;
+    img.style.display = 'inline-block';
+    msg.textContent = '✅ تم رفع الصورة وحفظها فعليًا.';
+    msg.style.color = 'var(--green)';
+  } catch (err) {
+    msg.textContent = '❌ فشل الرفع: ' + err.message;
+    msg.style.color = 'var(--danger)';
+    console.error(err);
+  }
+});
+
+// ---------- الوثائق (Cloudinary + Firestore) ----------
+async function loadDocuments(personId) {
+  const el = document.getElementById('p-profile-documents');
+  el.textContent = 'جاري التحميل…';
+  try {
+    const docsArr = await listDocumentsForPerson(personId);
+    if (docsArr.length === 0) {
+      el.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا توجد وثائق مرفوعة بعد.</p>';
+      return;
+    }
+    const canDelete = can(currentUser.profile, 'delete');
+    el.innerHTML = '';
+    docsArr.forEach((d) => {
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      row.innerHTML = `
+        <span style="flex:1">
+          <strong>${esc(DOC_TYPES[d.type] || d.type)}</strong>
+          ${d.number ? ' رقم ' + esc(d.number) : ''} — ${esc(d.date || '')}
+        </span>
+        <a href="${d.fileURL}" target="_blank" rel="noopener" style="font-size:12px; padding:4px 8px; border:1px solid var(--border); border-radius:6px; color:var(--text); text-decoration:none">معاينة</a>
+        ${canDelete ? `<button data-doc-id="${d.id}" style="font-size:12px; padding:4px 8px; border:1px solid var(--danger); color:var(--danger); background:transparent; border-radius:6px; margin-right:6px">حذف</button>` : ''}
+      `;
+      el.appendChild(row);
+    });
+    el.querySelectorAll('[data-doc-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('حذف مرجع هذه الوثيقة من السجل؟ (الملف نفسه قد يبقى على Cloudinary)')) return;
+        await deleteDocumentRecord(btn.dataset.docId);
+        loadDocuments(personId);
+      });
+    });
+  } catch (err) {
+    el.textContent = '❌ فشل تحميل الوثائق: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+document.getElementById('doc-upload-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('doc-upload-msg');
+  msg.style.display = 'none';
+  const fileInput = document.getElementById('doc-file-input');
+  const file = fileInput.files[0];
+  if (!file || !currentProfilePersonId) {
+    msg.textContent = 'اختر ملفًا أولاً.';
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('doc-upload-btn');
+  btn.disabled = true;
+  btn.textContent = 'جاري الرفع…';
+  try {
+    const { url, publicId } = await uploadToCloudinary(file);
+    await addDocumentRecord({
+      personnelId: currentProfilePersonId,
+      type: document.getElementById('doc-type').value,
+      number: document.getElementById('doc-number').value.trim(),
+      date: document.getElementById('doc-date').value,
+      notes: document.getElementById('doc-notes').value.trim(),
+      fileURL: url,
+      publicId
+    }, currentUser.uid);
+    msg.textContent = '✅ تم رفع الوثيقة وحفظها فعليًا.';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'block';
+    fileInput.value = '';
+    document.getElementById('doc-number').value = '';
+    document.getElementById('doc-notes').value = '';
+    loadDocuments(currentProfilePersonId);
+  } catch (err) {
+    msg.textContent = '❌ فشل الرفع: ' + err.message;
+    msg.style.color = 'var(--danger)';
+    msg.style.display = 'block';
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'رفع الوثيقة';
   }
 });
 
