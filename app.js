@@ -40,6 +40,19 @@ Object.entries(EVENT_TYPES).forEach(([key, label]) => {
   evTypeSelect.appendChild(opt);
 });
 
+// إظهار/إخفاء الحقول الإضافية الخاصة بنوع الحدث (دورة/ترقية/نقل) — المرحلة 12
+const evExtraGroups = {
+  course: document.getElementById('ev-course-fields'),
+  promotion: document.getElementById('ev-promotion-fields'),
+  transfer: document.getElementById('ev-transfer-fields')
+};
+function updateEventExtraFields() {
+  Object.entries(evExtraGroups).forEach(([key, el]) => {
+    el.style.display = evTypeSelect.value === key ? 'flex' : 'none';
+  });
+}
+evTypeSelect.addEventListener('change', updateEventExtraFields);
+
 const docTypeSelect = document.getElementById('doc-type');
 Object.entries(DOC_TYPES).forEach(([key, label]) => {
   const opt = document.createElement('option');
@@ -406,6 +419,21 @@ function openProfile(id) {
   document.getElementById('p-profile-add-leave').style.display =
     can(currentUser.profile, 'create') ? 'flex' : 'none';
 
+  // تعبئة الحقول المساعدة للترقية/النقل (المرحلة 12) وإعادة ضبط نوع الحدث للقيمة الافتراضية
+  document.getElementById('ev-prev-rank').value = p.rank || '—';
+  document.getElementById('ev-new-rank').value = '';
+  document.getElementById('ev-prev-unit').value = unitName;
+  const newUnitSelect = document.getElementById('ev-new-unit');
+  newUnitSelect.innerHTML = '<option value="">— اختر —</option>';
+  unitsCache.forEach((u) => {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = u.name;
+    newUnitSelect.appendChild(opt);
+  });
+  evTypeSelect.value = 'appointment';
+  updateEventExtraFields();
+
   loadTimeline(id);
   loadLeaves(id);
   loadDocuments(id);
@@ -432,11 +460,19 @@ async function loadTimeline(personId) {
     events.forEach((ev) => {
       const row = document.createElement('div');
       row.className = 'status-row';
+      let extra = '';
+      if (ev.type === 'course' && (ev.courseLocation || ev.courseResult || ev.courseGrade || ev.courseCertNumber)) {
+        extra = ` — ${esc(ev.courseLocation || '')} ${ev.courseResult ? '· النتيجة: ' + esc(ev.courseResult) : ''} ${ev.courseGrade ? '· التقدير: ' + esc(ev.courseGrade) : ''}`;
+      } else if (ev.type === 'promotion' && ev.newRank) {
+        extra = ` — من ${esc(ev.prevRank || '—')} إلى ${esc(ev.newRank)}`;
+      } else if (ev.type === 'transfer' && ev.newUnitName) {
+        extra = ` — من ${esc(ev.prevUnitName || '—')} إلى ${esc(ev.newUnitName)}`;
+      }
       row.innerHTML = `
         <span class="dot ok"></span>
         <span style="flex:1">
           <strong>${esc(ev.date || '')}</strong> — ${esc(EVENT_TYPES[ev.type] || ev.type)}
-          ${ev.title ? ': ' + esc(ev.title) : ''}
+          ${ev.title ? ': ' + esc(ev.title) : ''}${extra}
           ${ev.orderNumber ? ' (أمر رقم ' + esc(ev.orderNumber) + ')' : ''}
         </span>
         ${canDelete ? `<button data-ev-id="${ev.id}" style="font-size:12px; padding:4px 8px; border:1px solid var(--danger); color:var(--danger); background:transparent; border-radius:6px">حذف</button>` : ''}
@@ -585,20 +621,62 @@ document.getElementById('ev-save-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'جاري الحفظ…';
   try {
-    await addServiceEvent({
+    const type = document.getElementById('ev-type').value;
+    const eventData = {
       personnelId: currentProfilePersonId,
-      type: document.getElementById('ev-type').value,
+      type,
       date,
       title: document.getElementById('ev-title').value.trim(),
       orderNumber: document.getElementById('ev-orderNumber').value.trim()
-    }, currentUser.uid);
-    msg.textContent = '✅ أُضيف الحدث فعليًا للسجل.';
+    };
+
+    // حقول إضافية حسب نوع الحدث (المرحلة 12) — تُخزَّن ضمن الحدث نفسه كتفاصيل إضافية
+    if (type === 'course') {
+      eventData.courseLocation = document.getElementById('ev-course-location').value.trim();
+      eventData.courseResult = document.getElementById('ev-course-result').value.trim();
+      eventData.courseGrade = document.getElementById('ev-course-grade').value.trim();
+      eventData.courseCertNumber = document.getElementById('ev-course-cert').value.trim();
+    } else if (type === 'promotion') {
+      eventData.prevRank = document.getElementById('ev-prev-rank').value;
+      eventData.newRank = document.getElementById('ev-new-rank').value.trim();
+    } else if (type === 'transfer') {
+      const prevUnitName = document.getElementById('ev-prev-unit').value;
+      const newUnitId = document.getElementById('ev-new-unit').value;
+      eventData.prevUnitName = prevUnitName;
+      eventData.newUnitId = newUnitId;
+      eventData.newUnitName = unitsCache.find((u) => u.id === newUnitId)?.name || '';
+    }
+
+    await addServiceEvent(eventData, currentUser.uid);
+
+    // الربط الحقيقي المطلوب: الترقية تُحدّث رتبة المنتسب، والنقل يُحدّث وحدته — لا تبقى منفصلة
+    const p = personnelCache.find((x) => x.id === currentProfilePersonId);
+    if (type === 'promotion' && eventData.newRank) {
+      await updatePersonnel(currentProfilePersonId, { rank: eventData.newRank }, currentUser.uid);
+      if (p) p.rank = eventData.newRank;
+    } else if (type === 'transfer' && eventData.newUnitId) {
+      await updatePersonnel(currentProfilePersonId, { unitId: eventData.newUnitId }, currentUser.uid);
+      if (p) p.unitId = eventData.newUnitId;
+    }
+
+    msg.textContent = '✅ أُضيف الحدث فعليًا للسجل.' +
+      (type === 'promotion' && eventData.newRank ? ' وتحدّثت رتبة المنتسب تلقائيًا.' : '') +
+      (type === 'transfer' && eventData.newUnitId ? ' وتحدّثت وحدته تلقائيًا.' : '');
     msg.style.color = 'var(--green)';
     msg.style.display = 'block';
     document.getElementById('ev-date').value = '';
     document.getElementById('ev-title').value = '';
     document.getElementById('ev-orderNumber').value = '';
+    document.getElementById('ev-course-location').value = '';
+    document.getElementById('ev-course-result').value = '';
+    document.getElementById('ev-course-grade').value = '';
+    document.getElementById('ev-course-cert').value = '';
+    document.getElementById('ev-new-rank').value = '';
+    document.getElementById('ev-new-unit').value = '';
     loadTimeline(currentProfilePersonId);
+    if ((type === 'promotion' && eventData.newRank) || (type === 'transfer' && eventData.newUnitId)) {
+      openProfile(currentProfilePersonId); // إعادة رسم بطاقة المعلومات لتعكس الرتبة/الوحدة الجديدة فورًا
+    }
   } catch (err) {
     msg.textContent = '❌ فشل الحفظ: ' + (err.code || err.message);
     msg.style.color = 'var(--danger)';
