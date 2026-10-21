@@ -7,6 +7,7 @@ import { listPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from
 import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent } from "./serviceEvents.js";
 import { LEAVE_TYPES, calcLeaveDays, isLeaveActiveToday, listLeavesForPerson, listAllLeaves, addLeave, deleteLeave } from "./leaves.js";
 import { ATTENDANCE_STATUSES, setAttendance, listAttendanceForDate } from "./attendance.js";
+import { logAction, listRecentAuditLog, AUDIT_ACTION_LABELS } from "./auditLog.js";
 import { uploadToCloudinary } from "./cloudinary.js";
 import { DOC_TYPES, listDocumentsForPerson, addDocumentRecord, deleteDocumentRecord } from "./documents.js";
 
@@ -83,7 +84,8 @@ const tabs = {
   home: document.getElementById('tab-home'),
   personnel: document.getElementById('tab-personnel'),
   attendance: document.getElementById('tab-attendance'),
-  users: document.getElementById('tab-users')
+  users: document.getElementById('tab-users'),
+  audit: document.getElementById('tab-audit')
 };
 function showTab(name) {
   Object.entries(tabs).forEach(([key, el]) => { el.style.display = key === name ? 'block' : 'none'; });
@@ -95,6 +97,7 @@ function showTab(name) {
   }
   if (name === 'users') refreshUsersList();
   if (name === 'attendance') loadAttendanceTab();
+  if (name === 'audit') loadAuditLogTab();
 }
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => showTab(btn.dataset.tab));
@@ -118,6 +121,9 @@ watchAuthState(async (user) => {
     fbText.textContent = 'Firebase متصل — تسجيل الدخول نجح فعليًا';
 
     navUsersBtn.style.display = can(user.profile, 'manage_users') ? 'block' : 'none';
+    // سجل العمليات: super_admin فقط (مطابق لقاعدة القراءة في firestore.rules نفسها، وليس مصفوفة الصلاحيات العامة)
+    document.getElementById('nav-audit-btn').style.display =
+      user.profile && user.profile.role === 'super_admin' ? 'block' : 'none';
     document.getElementById('p-add-btn').style.display = can(user.profile, 'create') ? 'inline-block' : 'none';
 
     await loadUnitsIntoSelect();
@@ -143,7 +149,8 @@ loginBtn.addEventListener('click', async () => {
   loginBtn.disabled = true;
   loginBtn.textContent = 'جاري الدخول…';
   try {
-    await login(email, password);
+    const cred = await login(email, password);
+    logAction({ userId: cred.user.uid, userName: cred.user.email, action: 'LOGIN', targetType: 'auth', targetId: cred.user.uid });
   } catch (err) {
     loginError.textContent = 'فشل تسجيل الدخول: ' + (err.code || err.message);
     loginError.style.display = 'block';
@@ -152,7 +159,12 @@ loginBtn.addEventListener('click', async () => {
     loginBtn.textContent = 'دخول';
   }
 });
-logoutBtn.addEventListener('click', () => logout());
+logoutBtn.addEventListener('click', () => {
+  if (currentUser) {
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'LOGOUT', targetType: 'auth', targetId: currentUser.uid });
+  }
+  logout();
+});
 
 // ---------- 4) الوحدات ----------
 async function loadUnitsIntoSelect() {
@@ -257,8 +269,10 @@ document.getElementById('p-save-btn').addEventListener('click', async () => {
   try {
     if (id) {
       await updatePersonnel(id, data, currentUser.uid);
+      logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'UPDATE', targetType: 'personnel', targetId: id, details: `تعديل بيانات ${fullName}` });
     } else {
-      await createPersonnel(data, currentUser.uid);
+      const ref = await createPersonnel(data, currentUser.uid);
+      logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'CREATE', targetType: 'personnel', targetId: ref.id, details: `إضافة منتسب ${fullName}` });
     }
     msg.textContent = '✅ تم الحفظ فعليًا في قاعدة البيانات.';
     msg.style.color = 'var(--green)';
@@ -341,6 +355,7 @@ async function handleDelete(id) {
   if (!confirm(`هل أنت متأكد من حذف "${p?.fullName}"؟ لا يمكن التراجع.`)) return;
   try {
     await deletePersonnel(id);
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'DELETE', targetType: 'personnel', targetId: id, details: `حذف منتسب ${p?.fullName || ''}` });
     await refreshPersonnelList();
     await refreshPersonnelCountStat();
   } catch (err) {
@@ -483,6 +498,7 @@ async function loadTimeline(personId) {
       btn.addEventListener('click', async () => {
         if (!confirm('حذف هذا الحدث من السجل؟')) return;
         await deleteServiceEvent(btn.dataset.evId);
+        logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'DELETE', targetType: 'serviceEvent', targetId: btn.dataset.evId, details: `حذف حدث من سجل خدمة ${personId}` });
         loadTimeline(personId);
       });
     });
@@ -536,6 +552,7 @@ async function loadLeaves(personId) {
       btn.addEventListener('click', async () => {
         if (!confirm('حذف هذه الإجازة من السجل؟')) return;
         await deleteLeave(btn.dataset.lvId);
+        logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'DELETE', targetType: 'leave', targetId: btn.dataset.lvId, details: `حذف إجازة لمنتسب ${personId}` });
         loadLeaves(personId);
         refreshLeavesStat();
       });
@@ -577,6 +594,7 @@ document.getElementById('lv-save-btn').addEventListener('click', async () => {
       issuer: document.getElementById('lv-issuer').value.trim()
     };
     await addLeave(leaveData, currentUser.uid);
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'CREATE', targetType: 'leave', targetId: currentProfilePersonId, details: `تسجيل إجازة ${leaveData.type} من ${startDate} إلى ${endDate}` });
 
     // ربط حالة المنتسب فعليًا: إذا كانت الإجازة فعّالة اليوم، تُحدَّث حالته تلقائيًا
     // (شرط إلزامي: الحالة يجب أن تعتمد على بيانات حقيقية، لا تبقى منفصلة عن الإجازات)
@@ -648,6 +666,7 @@ document.getElementById('ev-save-btn').addEventListener('click', async () => {
     }
 
     await addServiceEvent(eventData, currentUser.uid);
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'CREATE', targetType: 'serviceEvent', targetId: currentProfilePersonId, details: `إضافة حدث ${EVENT_TYPES[type] || type}` });
 
     // الربط الحقيقي المطلوب: الترقية تُحدّث رتبة المنتسب، والنقل يُحدّث وحدته — لا تبقى منفصلة
     const p = personnelCache.find((x) => x.id === currentProfilePersonId);
@@ -699,6 +718,7 @@ document.getElementById('p-photo-input').addEventListener('change', async (e) =>
   try {
     const { url } = await uploadToCloudinary(file);
     await updatePersonnel(currentProfilePersonId, { photoURL: url }, currentUser.uid);
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'UPLOAD', targetType: 'personnel', targetId: currentProfilePersonId, details: 'رفع صورة شخصية' });
     const p = personnelCache.find((x) => x.id === currentProfilePersonId);
     if (p) p.photoURL = url;
     const img = document.getElementById('p-profile-photo');
@@ -742,6 +762,7 @@ async function loadDocuments(personId) {
       btn.addEventListener('click', async () => {
         if (!confirm('حذف مرجع هذه الوثيقة من السجل؟ (الملف نفسه قد يبقى على Cloudinary)')) return;
         await deleteDocumentRecord(btn.dataset.docId);
+        logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'DELETE', targetType: 'document', targetId: btn.dataset.docId, details: `حذف مرجع وثيقة لمنتسب ${personId}` });
         loadDocuments(personId);
       });
     });
@@ -776,6 +797,7 @@ document.getElementById('doc-upload-btn').addEventListener('click', async () => 
       fileURL: url,
       publicId
     }, currentUser.uid);
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'UPLOAD', targetType: 'document', targetId: currentProfilePersonId, details: `رفع وثيقة نوع ${document.getElementById('doc-type').value}` });
     msg.textContent = '✅ تم رفع الوثيقة وحفظها فعليًا.';
     msg.style.color = 'var(--green)';
     msg.style.display = 'block';
@@ -844,6 +866,7 @@ async function loadAttendanceTab() {
           sel.disabled = true;
           try {
             await setAttendance(personId, date, sel.value, currentUser.uid);
+            logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'UPDATE', targetType: 'attendance', targetId: personId, details: `تسجيل حضور ${date}: ${ATTENDANCE_STATUSES[sel.value] || sel.value}` });
             // ربط الحالة الحالية بالمنتسب فقط إذا كان التاريخ هو اليوم (نفس منطق الإجازات)
             const todayStr = new Date().toISOString().slice(0, 10);
             if (date === todayStr) {
@@ -930,6 +953,7 @@ uSaveBtn.addEventListener('click', async () => {
       name: uName.value.trim(), email: uEmail.value.trim(),
       role: uRole.value, active: uActive.checked
     });
+    logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'UPDATE', targetType: 'userProfile', targetId: uid, details: `تعيين دور ${uRole.value} لـ ${uName.value.trim()}` });
     uSaveMsg.textContent = '✅ تم الحفظ فعليًا في Firestore.';
     uSaveMsg.style.color = 'var(--green)';
     uSaveMsg.style.display = 'block';
@@ -943,3 +967,35 @@ uSaveBtn.addEventListener('click', async () => {
     uSaveBtn.textContent = 'حفظ المستخدم';
   }
 });
+
+// ---------- 10) سجل العمليات (Audit Log) — للقراءة فقط، super_admin حصرًا ----------
+async function loadAuditLogTab() {
+  const el = document.getElementById('audit-log-list');
+  el.textContent = 'جاري التحميل…';
+  try {
+    const entries = await listRecentAuditLog(50);
+    if (entries.length === 0) {
+      el.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا توجد عمليات مسجّلة بعد.</p>';
+      return;
+    }
+    el.innerHTML = '';
+    entries.forEach((e) => {
+      const when = e.timestamp && e.timestamp.toDate ? e.timestamp.toDate().toLocaleString('ar-IQ') : '—';
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      row.innerHTML = `
+        <span class="dot ok"></span>
+        <span style="flex:1">
+          <strong>${esc(e.userName || e.userId || 'مستخدم')}</strong>
+          — ${esc(AUDIT_ACTION_LABELS[e.action] || e.action)} (${esc(e.targetType || '')})
+          ${e.details ? ': ' + esc(e.details) : ''}
+          <br /><span style="color:var(--text-muted); font-size:11px">${esc(when)}</span>
+        </span>
+      `;
+      el.appendChild(row);
+    });
+  } catch (err) {
+    el.textContent = '❌ فشل تحميل سجل العمليات: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
