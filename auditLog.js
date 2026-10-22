@@ -13,7 +13,7 @@ import { db } from "./firebase-config.js";
 
 export const AUDIT_ACTION_LABELS = {
   CREATE: 'إنشاء', UPDATE: 'تعديل', DELETE: 'حذف',
-  LOGIN: 'تسجيل دخول', LOGOUT: 'تسجيل خروج', UPLOAD: 'رفع ملف'
+  LOGIN: 'تسجيل دخول', LOGOUT: 'تسجيل خروج', UPLOAD: 'رفع ملف', EXPORT: 'تصدير/طباعة'
 };
 
 // لا تنتظر الواجهة نتيجة التسجيل (fire-and-forget) حتى لا يبطئ أي عملية أساسية،

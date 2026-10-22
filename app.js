@@ -8,6 +8,7 @@ import { EVENT_TYPES, listEventsForPerson, addServiceEvent, deleteServiceEvent }
 import { LEAVE_TYPES, calcLeaveDays, isLeaveActiveToday, listLeavesForPerson, listAllLeaves, addLeave, deleteLeave } from "./leaves.js";
 import { ATTENDANCE_STATUSES, setAttendance, listAttendanceForDate } from "./attendance.js";
 import { logAction, listRecentAuditLog, AUDIT_ACTION_LABELS } from "./auditLog.js";
+import { buildStrengthReport, exportToCSV } from "./reports.js";
 import { uploadToCloudinary } from "./cloudinary.js";
 import { DOC_TYPES, listDocumentsForPerson, addDocumentRecord, deleteDocumentRecord } from "./documents.js";
 
@@ -85,7 +86,8 @@ const tabs = {
   personnel: document.getElementById('tab-personnel'),
   attendance: document.getElementById('tab-attendance'),
   users: document.getElementById('tab-users'),
-  audit: document.getElementById('tab-audit')
+  audit: document.getElementById('tab-audit'),
+  reports: document.getElementById('tab-reports')
 };
 function showTab(name) {
   Object.entries(tabs).forEach(([key, el]) => { el.style.display = key === name ? 'block' : 'none'; });
@@ -98,6 +100,7 @@ function showTab(name) {
   if (name === 'users') refreshUsersList();
   if (name === 'attendance') loadAttendanceTab();
   if (name === 'audit') loadAuditLogTab();
+  if (name === 'reports') loadReportsTab();
 }
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => showTab(btn.dataset.tab));
@@ -999,3 +1002,69 @@ async function loadAuditLogTab() {
     console.error(err);
   }
 }
+
+// ---------- 11) التقارير والتصدير والطباعة ----------
+async function loadReportsTab() {
+  const strengthEl = document.getElementById('report-strength');
+  const leavesEl = document.getElementById('report-leaves');
+  strengthEl.textContent = 'جاري الحساب…';
+  leavesEl.textContent = 'جاري التحميل…';
+  try {
+    if (personnelCache.length === 0) personnelCache = await listPersonnel();
+    const report = buildStrengthReport(personnelCache, unitsCache);
+
+    const section = (title, obj) => {
+      const rows = Object.entries(obj).map(([k, v]) => `<div class="status-row"><span style="flex:1">${esc(k)}</span><span>${v}</span></div>`).join('');
+      return `<p style="font-weight:600; margin:12px 0 4px">${title}</p>${rows || '<p style="color:var(--text-muted); font-size:13px">لا بيانات</p>'}`;
+    };
+    strengthEl.innerHTML =
+      `<div class="status-row"><span class="dot ok"></span><span>إجمالي المنتسبين: ${report.total}</span></div>` +
+      section('حسب الفئة', report.byCategory) +
+      section('حسب الرتبة', report.byRank) +
+      section('حسب الوحدة', report.byUnit) +
+      section('حسب الحالة', report.byStatus);
+
+    const allLeaves = await listAllLeaves();
+    if (allLeaves.length === 0) {
+      leavesEl.innerHTML = '<p style="color:var(--text-muted); font-size:14px">لا توجد إجازات مسجّلة.</p>';
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      leavesEl.innerHTML = allLeaves.map((lv) => {
+        const p = personnelCache.find((x) => x.id === lv.personnelId);
+        const status = lv.endDate < today ? 'منتهية' : (lv.startDate > today ? 'قادمة' : 'حالية');
+        return `<div class="status-row"><span style="flex:1">${esc(p?.fullName || lv.personnelId)} — ${esc(LEAVE_TYPES[lv.type] || lv.type)}</span><span style="color:var(--text-muted); font-size:12px">${esc(lv.startDate)}→${esc(lv.endDate)} (${status})</span></div>`;
+      }).join('');
+    }
+  } catch (err) {
+    strengthEl.textContent = '❌ فشل بناء التقرير: ' + (err.code || err.message);
+    console.error(err);
+  }
+}
+
+document.getElementById('report-export-csv-btn').addEventListener('click', () => {
+  const columns = [
+    { key: 'fullName', label: 'الاسم' }, { key: 'serviceNumber', label: 'الرقم الوظيفي' },
+    { key: 'rank', label: 'الرتبة' }, { key: 'category', label: 'الفئة' },
+    { key: 'position', label: 'المنصب' }, { key: 'status', label: 'الحالة' },
+    { key: 'phone', label: 'الهاتف' }
+  ];
+  exportToCSV(personnelCache, columns, 'تقرير_المنتسبين.csv');
+  logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'EXPORT', targetType: 'personnel', targetId: '', details: `تصدير CSV لـ ${personnelCache.length} منتسب` });
+});
+
+document.getElementById('report-print-btn').addEventListener('click', () => {
+  const report = buildStrengthReport(personnelCache, unitsCache);
+  const rows = personnelCache.map((p) => `
+    <tr><td>${esc(p.fullName)}</td><td>${esc(p.serviceNumber || '')}</td><td>${esc(p.rank || '')}</td><td>${esc(p.position || '')}</td><td>${esc(p.status || '')}</td></tr>
+  `).join('');
+  document.getElementById('print-report-area').innerHTML = `
+    <h2>نظام الإدارة والخدمات العسكرية — تقرير القوة</h2>
+    <p>التاريخ: ${new Date().toLocaleDateString('ar-IQ')} — إجمالي المنتسبين: ${report.total}</p>
+    <table>
+      <thead><tr><th>الاسم</th><th>الرقم الوظيفي</th><th>الرتبة</th><th>المنصب</th><th>الحالة</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+  logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'EXPORT', targetType: 'personnel', targetId: '', details: 'طباعة تقرير القوة' });
+  window.print();
+});
