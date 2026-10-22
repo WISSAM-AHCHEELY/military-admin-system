@@ -1,7 +1,8 @@
 // reports.js — تقارير حقيقية مبنية من البيانات الفعلية (لا أرقام ثابتة) + تصدير CSV
 
 // يبني تقرير القوة: عدد حسب الفئة/الرتبة/الوحدة/الحالة — كله من قائمة منتسبين حقيقية
-export function buildStrengthReport(personnelList, unitsList) {
+// categoryLabels/statusLabels: خرائط الترجمة لعرض تسميات عربية بدل القيم البرمجية الخام (officer/present/...)
+export function buildStrengthReport(personnelList, unitsList, categoryLabels = {}, statusLabels = {}) {
   const byCategory = {};
   const byRank = {};
   const byUnit = {};
@@ -10,10 +11,10 @@ export function buildStrengthReport(personnelList, unitsList) {
   unitsList.forEach((u) => { unitNameById[u.id] = u.name; });
 
   personnelList.forEach((p) => {
-    const cat = p.category || 'غير محدد';
+    const cat = categoryLabels[p.category] || p.category || 'غير محدد';
     const rank = p.rank || 'غير محدد';
     const unitName = unitNameById[p.unitId] || 'بدون وحدة';
-    const status = p.status || 'غير محدد';
+    const status = statusLabels[p.status] || p.status || 'غير محدد';
     byCategory[cat] = (byCategory[cat] || 0) + 1;
     byRank[rank] = (byRank[rank] || 0) + 1;
     byUnit[unitName] = (byUnit[unitName] || 0) + 1;

@@ -1,6 +1,6 @@
 // ⚠️ مهم جداً: ارفع رقم الإصدار (CACHE_VERSION) مع كل نشر جديد ملموس.
 // هذا هو ما يمنع بقاء هاتفك "عالقاً" على نسخة قديمة بعد أي تحديث.
-const CACHE_VERSION = 'v12'; // ...، v11=المرحلة19، v12=المرحلة17 (reports.js — تقارير/تصدير/طباعة)
+const CACHE_VERSION = 'v13'; // ...، v12=المرحلة17، v13=إصلاح عرض الفئة/الحالة بالعربية بدل officer/present الخام
 const CACHE_NAME = `military-admin-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [

@@ -1011,7 +1011,7 @@ async function loadReportsTab() {
   leavesEl.textContent = 'جاري التحميل…';
   try {
     if (personnelCache.length === 0) personnelCache = await listPersonnel();
-    const report = buildStrengthReport(personnelCache, unitsCache);
+    const report = buildStrengthReport(personnelCache, unitsCache, CATEGORY_LABELS, STATUS_LABELS);
 
     const section = (title, obj) => {
       const rows = Object.entries(obj).map(([k, v]) => `<div class="status-row"><span style="flex:1">${esc(k)}</span><span>${v}</span></div>`).join('');
@@ -1048,14 +1048,19 @@ document.getElementById('report-export-csv-btn').addEventListener('click', () =>
     { key: 'position', label: 'المنصب' }, { key: 'status', label: 'الحالة' },
     { key: 'phone', label: 'الهاتف' }
   ];
-  exportToCSV(personnelCache, columns, 'تقرير_المنتسبين.csv');
+  const exportRows = personnelCache.map((p) => ({
+    ...p,
+    category: CATEGORY_LABELS[p.category] || p.category || '',
+    status: STATUS_LABELS[p.status] || p.status || ''
+  }));
+  exportToCSV(exportRows, columns, 'تقرير_المنتسبين.csv');
   logAction({ userId: currentUser.uid, userName: currentUser.email, action: 'EXPORT', targetType: 'personnel', targetId: '', details: `تصدير CSV لـ ${personnelCache.length} منتسب` });
 });
 
 document.getElementById('report-print-btn').addEventListener('click', () => {
-  const report = buildStrengthReport(personnelCache, unitsCache);
+  const report = buildStrengthReport(personnelCache, unitsCache, CATEGORY_LABELS, STATUS_LABELS);
   const rows = personnelCache.map((p) => `
-    <tr><td>${esc(p.fullName)}</td><td>${esc(p.serviceNumber || '')}</td><td>${esc(p.rank || '')}</td><td>${esc(p.position || '')}</td><td>${esc(p.status || '')}</td></tr>
+    <tr><td>${esc(p.fullName)}</td><td>${esc(p.serviceNumber || '')}</td><td>${esc(p.rank || '')}</td><td>${esc(p.position || '')}</td><td>${esc(STATUS_LABELS[p.status] || p.status || '')}</td></tr>
   `).join('');
   document.getElementById('print-report-area').innerHTML = `
     <h2>نظام الإدارة والخدمات العسكرية — تقرير القوة</h2>
